@@ -1,0 +1,214 @@
+Zrób to sam - interaktywna mapa w przeglądarce
+
+Jeśli chciałbyś sworzyć swoją własną, interaktywną, Googlopodobną mapę - czytaj dalej! W tym poradniku dowiesz się jak z dowolnego obrazu, skanu czy zdjęcia zrobić skalowalną mapę w przeglądarce internetowej.
+
+Do stworzenia mapy będziemy między innymi potrzebować:
+1) biblioteki jQuery;
+2) biblioteki Leaflet.js do obsługi mapy;
+3) pakietu narzędzi ImageMagick w wersji co najmniej 6.2.4;
+4) Pythona.
+
+W niniejszym przykładzie przerobię obraz mapy Śródziemia (http://i.imgur.com/Qfwtx.jpg?1) na mapę o trzech poziomach powiększenia, ze znacznikami i popupami.
+
+Zaczynamy!
+
+I. Przygotowanie kafelków
+
+Typowa interaktywna mapa podzielona jest na kafelki - mniejsze fragmenty całości, pobierane według potrzeby. Dzięki temu zamiast ładować cały obraz do pamięci, ładowany jest tylko jego fragment widoczny w przeglądarce, wydzielany na podstawie bieżących współrzędnych na mapie i poziomu powiększenia.
+Biblioteka Leaflet domyślnie przyjmuje kafelki o rozmiarach 256x256px, i takie jej przygotuję. Napisałem do tego celu skrypt w Pythonie, który z użyciem narzędzi do obróbki grafiki ImageMagick potnie mapę Śródziemia na kawałki, dopełni je w razie potrzeby do docelowego rozmiaru i ponazywa zgodnie z konwencją zdefiniowaną w konfiguracji mapy.
+
+Gotowy skrypt: http://pastebin.com/f9XCMNUG
+
+Dwa najważniejsze miejsca w skrypcie to:
+
+call("convert -crop " + str(tile_width) + "x" + str(tile_height) + " +repage " + input_filename + " tmp_tile_%d.png", shell = True)
+
+Tutaj wywoływany jest ImageMagick który tnie obraz wejściowy a wynikowym kafelkom nadaje nazwę ze zwiększanym o 1 licznikiem. Określenie pozycji na dwuwymiarowej mapie wymaga jednak podania dwóch współrzędnych, i podobnie jest z kafelkami. Pocięty obraz tworzy macierz kafelków których położenie określane jest poprzez numer kolumny i wiersza w którym dany kafelek się znajduje. W moim przykładzie Leaflet.js pobiera kafelki na podstawie nazwy pliku zdefiniowanej przy tworzeniu obiektu mapy. Muszę więc zmienić nazwy nowo utworzonym kafelkom tak, by zawierały w sobie informację o położeniu kafelka na macierzy:
+
+for n in range(0, total_tiles):
+    [...]
+    source_filename = "tmp_tile_%d.png" % n
+    [...]
+    target_filename = "tile_%d_%d.png" % (column, row)
+    [...]
+    column += 1
+    if column >= number_of_columns:
+        column = 0
+        row += 1
+        
+Skrypt ten uruchamiam pierwszy raz na oryginalnym obrazie mapy Śródziemia. Będzie to moje powiększenie o poziomie 3, czyli największe. Oryginalny obraz zmniejszam o połowę (np. z użyciem programu IrfanView) i wrzucam go do skryptu. W wyniku otrzymam mniej kafelków niż poprzednio, które posłużą mi za wyświetlenie poziomu powiększenia 2. Użyty przed chwilą dwukrotnie pomniejszony obraz również zmniejszam o połowę i wrzucam do skryptu. Będzie to najmniejszy, pierwszy poziom powiększenia.
+Gotowa struktura katalogów z kafelkami powinna wyglądać tak:
+
+/
+    index.htm
+    data/
+        tiles/
+            middleearth/
+                1/
+                    tile_0_0.png
+                    [...]
+                2/
+                    tile_0_0.png
+                    [...]
+                3/
+                
+W strukturze tej katalog "middleearth" odpowiada naszej "warstwie" Śródziemia. Na jednej mapie możemy mieć kilka różnych warstw pomiędzy którymi możemy przełączać się w GUI na wzór wyboru trybu zdjęć satelitarnych, dróg i zdjęć lotniczych z Mapy Google. O tym jak obsłużyć więcej warstw napiszę w dalszej części poradnika.
+Katalogi "1", "2" i "3" to nasze kolejne poziomy powiększenia zawierające w sobie odpowiadające im wygenerowane przez skrypt kafelki. Pierwsza liczba w nazwie pliku odpowiada kolumnie w której znajduje się kafelek na macierzy, a druga wierszowi.
+
+II. Kod HTML i CSS
+
+Czas na przygotowanie HTMLa:
+
+http://pastebin.com/Xt0uKfv1
+
+<!DOCTYPE html>
+<meta charset="utf8"/>
+<title>Middle Earth</title>
+<link rel="icon" type="image/x-icon" href="css/images/favicon.ico"/>
+<link rel="stylesheet" type="text/css" href="css/index.css"/>
+<link rel="stylesheet" type="text/css" href="css/leaflet.css"/>
+<script src="js/jquery-1.11.0.min.js"></script>
+<script src="js/leaflet.js"></script>
+<script src="js/index.js"></script>
+<div id="map"></div>
+
+W kodzie tym leaflet.css oraz leaflet.js to pliki z oficjalnej paczki Leaflet.js.
+    
+Podstawowy CSS przygotowujący element w którym zostanie osadzona mapa:
+
+http://pastebin.com/L6TRFRD8
+
+*{margin:0;padding:0;border:0;}
+html,body,#map{width:100%;height:100%;}
+#map{background:white;}
+
+III. Kod JavaScript
+
+Został już tylko najważniejszy fragment kodu, czyli skrypt JS:
+
+http://pastebin.com/UB7ie4ih
+
+Omówię go tu dokładnie.
+
+Na samym początku tworzę obiekt mapy Leaflet.js:
+
+var map = L.map('map', {
+        crs: L.CRS.Simple,
+        minZoom: 1,
+        maxZoom: 3,        
+        // sets the center of a simple coordinate system
+        center: [0.0, 0.0]
+    // sets the starting position and map zoom
+    }).setView([0, 0], 1); 
+    
+CRS - Coordinate Reference System, system odniesień przestrzennych. Leaflet obsługuje najważniejsze systemy używane w kartografii, w tym używany w Polsce EPSG:4326. Ja tworzę fikcyjną mapę na podstawie płaskiego (niesferycznego) rysunku, używam więc systemu "prostego" (Simple).
+minZoom, maxZoom - ustalam granice powiększenia, zgodne z zestawem kafelków jakie przygotowałem wcześniej z użyciem skryptu. Przygotowałem trzy zestawy o różnym stopniu powiększenia, więc ustalam trzy poziomy. Będą one dostępne w GUI mapy oraz pod rolką myszy.
+center - ustalam geograficzny środek mapy.
+setView - metoda wykonana na nowo utworzonym obiekcie mapy, ustawiająca początkowy widok (współrzędne [0, 0]) oraz powiększenie (1).
+
+Mam obiekt mapy z ustalonymi współrzędnymi i powiększeniem, ale jest ona pusta. Muszę zdefiniować warstwy kafelków które będą na nią nanoszone. Wspomniałem wcześniej o tym że na jednej mapie można wyświetlać różne warstwy kafelków, np. zdjęcia satelitarne na zmianę z mapą rastrową. W moim przykładzie warstwą pierwszą będzie przygotowana już mapa Śródziemia, a warstwą drugą ta sama mapa, ale w wersji czarno-białej. Do tej drugiej warstwy potrzebne będą nowe kafelki. Procedura ich tworzenia jest taka sama jak poprzednio, ale przed stworzeniem kafelków konwertuję obraz na czarno-biały (znów kłania się IrfanView), a kafelki wrzucam do podkatalogu /data/tiles/middleearthgrayscale/[podkatalogi odpowiadające stopniom powiększenia].
+
+tileLayers = [
+        MiddleEarthTileLayer = L.tileLayer('data/tiles/middleearth/{z}/tile_{x}_{y}.png', {
+            attribution: "Middle Earth",
+            noWrap: true
+        }),
+        GrayscaleMiddleEarthTileLayer = L.tileLayer('data/tiles/middleearthgrayscale/{z}/tile_{x}_{y}.png', {
+            attribution: "Middle Earth in grayscale",
+            noWrap: true
+        })
+    ];
+    
+tileLayers - tablica warstw mapy. W moim przykładzie warstwy będą dwie - kolorowa i czarno-biała mapa Śródziemia.
+tileLayer - obiekt warstwy mapy. W pierwszym argumencie podaję względny URL do kafelków:
+
+data/tiles/middleearth/{z}/tile_{x}_{y}.png
+
+Leaflet podstawi pod {z} aktualne powiększenie, a pod {x} i {y} współrzędne potrzebnego kafelka. Dzięki temu że kafelki umieściłem w odpowiednich podfolderach i nadałem im pasujące współrzędnym nazwy, Leaflet pobierze dokładnie te kafelki które będą mu akurat potrzebne.
+
+Pozostałe atrybuty:
+attribution - nazwa warstwy do wyświetlenia w GUI.
+noWrap - mapa nie będzie "zawijana" na krańcach.
+
+Zdefiniowałem warstwy. Teraz muszę stworzyć obiekt GUI odpowiedzialny za wyświetlanie kontrolki wyboru tych warstw:
+
+ var maps = function() {
+        var tempMaps = {};
+        for(var i = 0; i < tileLayers.length; ++i)
+        {    
+            tileLayers[i].options.errorTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4//8/AAX+Av4zEpUUAAAAAElFTkSuQmCC';
+            tempMaps[tileLayers[i].options.attribution] = tileLayers[i];
+        }
+        return tempMaps;
+    }();
+    
+    map.layers = tileLayers;
+    tileLayers[0].addTo(map);
+    L.control.layers(maps).addTo(map); 
+    
+options.errorTileUrl - specjalny atrybut warstwy mapy. Podaje się w nim URL kafelka zastępczego, ładowanego w przypadku gdy z jakiegoś powodu Leaflet nie będzie w stanie załadować pożądanego kafelka. Ja podaję w URLu zakodowany w base64 jednopikselowy, biały kafelek.
+map.layers - miejsce w którym przechowuje się warstwy używane na mapie.
+addTo(map) - chcę by po załadowaniu strony pojawiała się od razu pierwsza, kolorowa warstwa. Używam więc metody addTo by automatycznie dodać ją do mapy.
+L.control.layers(maps).addTo(map) - dodaję do mapy utworzoną kontrolkę GUI odpowiedzialną za wybór warstwy.
+
+Chcę by przesuwanie mapy było ograniczone do jej krawędzi. Jeśli o to nie zadbam, będę mógł przewijać mapę w nieskończoność, oddalając się od granic warstwy. By ograniczyć przesuwanie do krawędzi warstwy muszę przekonwertować jej rozmiary podane w pikselach na współrzędne geograficzne używane przez Leaflet:
+
+    var southWestBound = map.unproject([0, 2400], map.getMaxZoom());
+    var northEastBound = map.unproject([2424, 0], map.getMaxZoom());
+    map.setMaxBounds(new L.LatLngBounds(southWestBound, northEastBound));
+    
+unproject - konwersja współrzędnych pikselowych na geograficzne. Jako że mapa jest prostokątna wystarczą dwie współrzędne przeciwległych narożników. Ja podaję lewy dolny (współrzędne pikselowe [0, 2400]) i prawy górny ([2424, 0]). Dla obydwu punktów podaję również powiększenie dla którego tworzę granice. Ustalam ogólny limit dla największego powiększenia (mniejsze powiększenia również się w nim mieszczą), podając je dzięki metodzie getMaxZoom.
+setMaxBounds - ustalenie granic przesuwania. Metoda przyjmuje parę współrzędnych typu LatLngBounds, na które składają się wyliczone wcześniej współrzędne.
+
+Dodam jeszcze do mapy przykładowy popup. Po kliknięciu lewym przyciskiem myszy pod kursorem wyskoczy popup podający współrzędne kliknięcia. Może to się przydać przy dodawaniu nowych znaczników do mapy:
+
+var popup = L.popup();
+ map.on('click', function(e){
+        popup.setLatLng(e.latlng)
+            .setContent("You clicked the map at " + e.latlng.toString())
+            .openOn(map);
+    });
+    
+on - obsługa zdarzeń na mapie.
+popup.setLatLng - ustawienie współrzędnych w których ma wyskoczyć popup. Współrzędnymi będą te pobrane z obiektu zdarzenia, czyli współrzędne kliknięcia (e.latlng).
+setContent - ustawienie treści popupa. Można używać HTMLa.
+openOn - wyświetlenie popupa na mapie.
+
+Ostatnim przykładem będzie znacznik. By dodawać znaczniki potrzebne są ikony, współrzędne oraz opcjonalnie popup z treścią:
+
+Najpierw ikona:
+
+var markerIcon = L.icon({
+        iconUrl: "css/images/marker.png",
+        iconsize: [35, 59],
+        iconAnchor: [0, 47],
+        popupAnchor: [19, -30]
+    });
+
+iconAnchor - punkt zaczepienia ikony na mapie. W zależności od jej kształtu (np. strzałka, celownik, rysunek) mogę sprecyzować który jej punkt jest tym jednoznacznie wskazującym miejsce na mapie, np. szpica strzały, palec wskazujący dłoni, itp.
+popupAnchor - punkt zaczepienia popupa. Znów w zależności od kształtu ikony mogę sprecyzować by popup wyskakiwał np. z ust wskazującej punkt na mapie postaci.
+    
+    var marker = L.marker([-75.875, 105.125], {icon: markerIcon, draggable:'true'}).addTo(map);
+    marker.bindPopup('<a href="https://en.wikipedia.org/wiki/Fornost#Fornost">Fornost</a>');
+    
+marker() - tworzę marker o podanych współrzędnych i ikonie.
+draggable - flaga decydująca o tym czy marker można przesuwać po mapie. W tym przypadku marker wskazuje na unikalne miejsce na mapie więc jego przesuwanie nie ma sensu, jednak pozostawiam je dla przykładu.
+bindPopup - dołączam do markera popup który wyskoczy po jego kliknięciu.
+
+Ostatecznie tak powinna wyglądać struktura plików i katalogów:
+/
+    css/images/[pliki graficzne Leaflet, ikona markera]
+    css/index.css
+    css/leaflet.css
+    data/tiles/
+    data/tiles/middleearth/[1][2][3]
+    data/tiles/middleearthgrayscale/[1][2][3]
+    js/index.js
+    js/jquery-1.11.0.min.js
+    js/leaflet.js
+    index.htm
+    
+Gotowe! :)
+
+Mapę można rozbudować o przezroczyste warstwy, dodatkowe zdarzenia, nowe markery, zapisy tras (np. trasa Drużyny Pierścienia), dynamiczne popupy, dodawanie obiektów z poziomu GUI... Wszystkie możliwości biblioteki Leaflet dostępne są w oficjalnej dokumentacji pod adresem http://leafletjs.com/reference.html
+Powodzenia!

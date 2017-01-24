@@ -1,0 +1,6 @@
+{
+    markers: [
+        {"name":"Hobbiton","position":{"lat":-19,"lng":-79},"description":"http://pl.wikipedia.org/wiki/Shire_%28%C5%9Ar%C3%B3dziemie%29#Zachodnia_.C4.86wiartka"},
+        {"name":"Mordor","position":{"lat":-12,"lng":-79},"description":"http://pl.wikipedia.org/wiki/Mordor"}
+    ]
+}
